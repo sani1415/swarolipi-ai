@@ -64,12 +64,8 @@ const App: React.FC = () => {
       try {
         const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
         
-        // AuthSessionMissingError is expected when user is not logged in
-        if (authError && authError.name !== 'AuthSessionMissingError') {
+        if (authError) {
           console.error('Error checking authentication:', authError);
-        }
-        
-        if (!authUser) {
           setLoading(false);
           return;
         }
@@ -110,42 +106,24 @@ const App: React.FC = () => {
 
     // Listen for auth changes (including token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'TOKEN_REFRESHED') {
-        console.log('Token refreshed automatically');
-        return;
+      // Handle token refresh and other auth events
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN' || (event === 'USER_UPDATED' && session?.user)) {
+        console.log('Auth event:', event);
       }
       
       if (session?.user) {
         setUser(session.user);
         try {
-          // Try to get user ID
-          const { data: userData, error: fetchError } = await supabase
+          const { data: userData } = await supabase
             .from('users')
             .select('id')
             .eq('auth_user_id', session.user.id)
             .single();
-          
           if (userData) {
             setUserId(userData.id);
-            setLoading(false);
-          } else if (fetchError) {
-            // User row doesn't exist, create it
-            const { data: newUser, error: createError } = await supabase
-              .from('users')
-              .insert({ auth_user_id: session.user.id })
-              .select()
-              .single();
-
-            if (newUser && !createError) {
-              setUserId(newUser.id);
-            } else {
-              console.error('Failed to create user row:', createError);
-            }
-            setLoading(false);
           }
         } catch (err) {
-          console.error('Error handling user ID:', err);
-          setLoading(false);
+          console.error('Error fetching user ID:', err);
         }
       } else if (event === 'SIGNED_OUT') {
         // Clear all state on explicit sign out
@@ -153,7 +131,6 @@ const App: React.FC = () => {
         setUserId(null);
         setNotes([]);
         setCurrentNoteId(null);
-        setLoading(false);
       }
     });
 
@@ -238,18 +215,14 @@ const App: React.FC = () => {
     }
     
     try {
-      // Clear state immediately to prevent UI flashing
+      await supabase.auth.signOut();
+      // Explicitly clear state to prevent race conditions
       setUser(null);
       setUserId(null);
       setNotes([]);
       setCurrentNoteId(null);
-      setLoading(true);
-      
-      await supabase.auth.signOut();
-      setLoading(false);
     } catch (err) {
       console.error('Logout error:', err);
-      setLoading(false);
       alert('লগআউটে সমস্যা হয়েছে। দয়া করে পুনরায় চেষ্টা করুন।');
     }
   };
