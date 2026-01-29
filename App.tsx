@@ -71,27 +71,28 @@ const App: React.FC = () => {
         }
         
         if (authUser) {
-        setUser(authUser);
-        
-        // Get user_id from public.users table
-        const { data: userData, error } = await supabase
-          .from('users')
-          .select('id')
-          .eq('auth_user_id', authUser.id)
-          .single();
-
-        if (userData) {
-          setUserId(userData.id);
-        } else if (error) {
-          // User row doesn't exist, create it
-          const { data: newUser, error: createError } = await supabase
+          setUser(authUser);
+          
+          // Get user_id from public.users table
+          const { data: userData, error } = await supabase
             .from('users')
-            .insert({ auth_user_id: authUser.id })
-            .select()
+            .select('id')
+            .eq('auth_user_id', authUser.id)
             .single();
 
-          if (newUser && !createError) {
-            setUserId(newUser.id);
+          if (userData) {
+            setUserId(userData.id);
+          } else if (error) {
+            // User row doesn't exist, create it
+            const { data: newUser, error: createError } = await supabase
+              .from('users')
+              .insert({ auth_user_id: authUser.id })
+              .select()
+              .single();
+
+            if (newUser && !createError) {
+              setUserId(newUser.id);
+            }
           }
         }
         setLoading(false);
