@@ -60,73 +60,63 @@ const App: React.FC = () => {
       return;
     }
 
-    const checkAuth = async () => {
+    const resolveUserId = async (authUserId: string) => {
       try {
-        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
-        
-        if (authError) {
-          console.error('Error checking authentication:', authError);
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('id')
+          .eq('auth_user_id', authUserId)
+          .single();
+
+        if (userData) {
+          setUserId(userData.id);
+        } else if (error) {
+          // User row doesn't exist, create it
+          const { data: newUser, error: createError } = await supabase
+            .from('users')
+            .insert({ auth_user_id: authUserId })
+            .select()
+            .single();
+
+          if (newUser && !createError) {
+            setUserId(newUser.id);
+          }
+        }
+      } catch (err) {
+        console.error('Error resolving user ID:', err);
+      }
+    };
+
+    // Use getSession (reads localStorage, no network call) for initial check
+    const initAuth = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error('Error checking session:', error);
           setLoading(false);
           return;
         }
-        
-        if (authUser) {
-          setUser(authUser);
-          
-          // Get user_id from public.users table
-          const { data: userData, error } = await supabase
-            .from('users')
-            .select('id')
-            .eq('auth_user_id', authUser.id)
-            .single();
-
-          if (userData) {
-            setUserId(userData.id);
-          } else if (error) {
-            // User row doesn't exist, create it
-            const { data: newUser, error: createError } = await supabase
-              .from('users')
-              .insert({ auth_user_id: authUser.id })
-              .select()
-              .single();
-
-            if (newUser && !createError) {
-              setUserId(newUser.id);
-            }
-          }
+        if (session?.user) {
+          setUser(session.user);
+          await resolveUserId(session.user.id);
         }
-        setLoading(false);
       } catch (err) {
         console.error('Unexpected error during auth check:', err);
+      } finally {
         setLoading(false);
       }
     };
 
-    checkAuth();
+    initAuth();
 
     // Listen for auth changes (including token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      // Handle token refresh and other auth events
-      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN' || (event === 'USER_UPDATED' && session?.user)) {
-        console.log('Auth event:', event);
-      }
-      
+      console.log('Auth event:', event);
+
       if (session?.user) {
         setUser(session.user);
-        try {
-          const { data: userData } = await supabase
-            .from('users')
-            .select('id')
-            .eq('auth_user_id', session.user.id)
-            .single();
-          if (userData) {
-            setUserId(userData.id);
-          }
-        } catch (err) {
-          console.error('Error fetching user ID:', err);
-        }
+        await resolveUserId(session.user.id);
       } else if (event === 'SIGNED_OUT') {
-        // Clear all state on explicit sign out
         setUser(null);
         setUserId(null);
         setNotes([]);
