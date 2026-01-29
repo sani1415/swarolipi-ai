@@ -64,8 +64,12 @@ const App: React.FC = () => {
       try {
         const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
         
-        if (authError) {
+        // AuthSessionMissingError is expected when user is not logged in
+        if (authError && authError.name !== 'AuthSessionMissingError') {
           console.error('Error checking authentication:', authError);
+        }
+        
+        if (!authUser) {
           setLoading(false);
           return;
         }
