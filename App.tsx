@@ -60,44 +60,62 @@ const App: React.FC = () => {
       return;
     }
 
-    const resolveUserId = async (authUserId: string) => {
+    const resolveUserId = async (authUserId: string): Promise<void> => {
       try {
-        // Try to get existing user row
-        const { data: userData, error } = await supabase
+        // Set fallback immediately so app doesn't wait
+        setUserId(authUserId);
+
+        // Try to get existing user row with timeout
+        const queryPromise = supabase
           .from('users')
           .select('id')
           .eq('auth_user_id', authUserId)
           .single();
 
-        if (userData) {
-          setUserId(userData.id);
-          return;
-        }
+        const timeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Query timeout')), 3000)
+        );
 
-        if (error) {
-          console.warn('users table lookup failed:', error.message);
-          // Try to create the row
-          const { data: newUser, error: createError } = await supabase
-            .from('users')
-            .insert({ auth_user_id: authUserId })
-            .select()
-            .single();
+        try {
+          const { data: userData, error } = await Promise.race([queryPromise, timeout]) as any;
 
-          if (newUser && !createError) {
-            setUserId(newUser.id);
+          if (userData?.id) {
+            setUserId(userData.id);
             return;
           }
-          if (createError) {
-            console.warn('users table insert failed:', createError.message);
-          }
-        }
 
-        // Fallback: use auth user ID directly so the app isn't stuck
-        console.warn('Falling back to auth user ID as userId');
-        setUserId(authUserId);
+          if (error && !error.message?.includes('timeout') && !error.message?.includes('No rows')) {
+            console.warn('users table lookup failed:', error.message);
+            // Try to create the row
+            try {
+              const createPromise = supabase
+                .from('users')
+                .insert({ auth_user_id: authUserId })
+                .select()
+                .single();
+
+              const createTimeout = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Create timeout')), 3000)
+              );
+
+              const { data: newUser, error: createError } = await Promise.race([createPromise, createTimeout]) as any;
+
+              if (newUser?.id && !createError) {
+                setUserId(newUser.id);
+                return;
+              }
+            } catch (createErr) {
+              // Already using fallback, just log
+              console.warn('Error creating user row:', createErr);
+            }
+          }
+        } catch (timeoutErr) {
+          console.warn('User ID resolution timed out, using auth user ID');
+          // Already set to authUserId above, so we're good
+        }
       } catch (err) {
         console.error('Error resolving user ID, using fallback:', err);
-        setUserId(authUserId);
+        // Already set to authUserId above, so we're good
       }
     };
 
@@ -105,18 +123,26 @@ const App: React.FC = () => {
     const initAuth = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
+        
         if (error) {
           console.error('Error checking session:', error);
           setLoading(false);
           return;
         }
+        
         if (session?.user) {
           setUser(session.user);
-          await resolveUserId(session.user.id);
+          // Set loading to false immediately, resolve userId in background
+          setLoading(false);
+          // Resolve userId asynchronously without blocking
+          resolveUserId(session.user.id).catch(err => {
+            console.error('Error resolving userId:', err);
+          });
+        } else {
+          setLoading(false);
         }
       } catch (err) {
         console.error('Unexpected error during auth check:', err);
-      } finally {
         setLoading(false);
       }
     };
@@ -129,7 +155,10 @@ const App: React.FC = () => {
 
       if (session?.user) {
         setUser(session.user);
-        await resolveUserId(session.user.id);
+        // Resolve userId in background, don't block
+        resolveUserId(session.user.id).catch(err => {
+          console.error('Error resolving userId in auth state change:', err);
+        });
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
         setUserId(null);
