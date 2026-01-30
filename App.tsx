@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar';
 import Recorder from './components/Recorder';
 import Auth from './components/Auth';
 import { Note, TranscriptParagraph, RecordingStatus } from './types';
-import { Calendar, Clock, Edit3, BookOpen, LogOut, User } from 'lucide-react';
+import { Calendar, Clock, Edit3, BookOpen, LogOut, User, Menu, X } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 // Move EditableParagraph outside to prevent re-mounting on every render
@@ -33,7 +33,7 @@ const EditableParagraph: React.FC<{
         onChange={(e) => onUpdate(p.id, e.target.value)}
         onInput={adjustHeight}
         rows={1}
-        className="w-full text-lg md:text-xl text-slate-700 leading-relaxed bg-transparent border-none focus:ring-2 focus:ring-indigo-100 rounded-lg p-2 -ml-2 transition-all resize-none outline-none overflow-hidden hover:bg-slate-50/50"
+        className="w-full text-base md:text-lg lg:text-xl text-slate-700 leading-relaxed bg-transparent border-none focus:ring-2 focus:ring-indigo-100 rounded-lg p-2 -ml-2 transition-all resize-none outline-none overflow-hidden hover:bg-slate-50/50"
         placeholder="এখানে কিছু লিখুন..."
       />
       <div className="flex justify-end">
@@ -52,6 +52,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
   const [userId, setUserId] = useState<string | null>(null); // user_id from public.users table
   const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Check authentication state and get user
   useEffect(() => {
@@ -434,63 +435,94 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-['Inter','Noto_Sans_Bengali']">
-      <Sidebar
-        notes={notes}
-        currentNoteId={currentNoteId}
-        onSelectNote={setCurrentNoteId}
-        onNewNote={handleNewNote}
-        onDeleteNote={handleDeleteNote}
-        onExport={handleExportNotes}
-        onImport={handleImportNotes}
-      />
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-      <main className="flex-1 flex flex-col relative">
-        {/* User info and logout button */}
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-white rounded-lg shadow-sm border border-slate-200 text-sm text-slate-600">
-            <User size={16} />
-            <span className="truncate max-w-[200px]">{user.email}</span>
+      {/* Sidebar */}
+      <div className={`
+        fixed md:static inset-y-0 left-0 z-50 md:z-auto
+        transform transition-transform duration-300 ease-in-out
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <Sidebar
+          notes={notes}
+          currentNoteId={currentNoteId}
+          onSelectNote={(id) => {
+            setCurrentNoteId(id);
+            setSidebarOpen(false); // Close sidebar on mobile when note is selected
+          }}
+          onNewNote={handleNewNote}
+          onDeleteNote={handleDeleteNote}
+          onExport={handleExportNotes}
+          onImport={handleImportNotes}
+        />
+      </div>
+
+      <main className="flex-1 flex flex-col relative min-w-0">
+        {/* Mobile menu button and user controls */}
+        <div className="absolute top-2 right-2 md:top-4 md:right-4 z-20 flex items-center gap-2 md:gap-3">
+          {/* Mobile menu button */}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="md:hidden p-2 bg-white rounded-lg shadow-sm border border-slate-200 text-slate-600 hover:bg-slate-50"
+            aria-label="Toggle menu"
+          >
+            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+
+          {/* User info - hidden on mobile, show on tablet+ */}
+          <div className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 bg-white rounded-lg shadow-sm border border-slate-200 text-xs md:text-sm text-slate-600">
+            <User size={14} className="md:w-4 md:h-4" />
+            <span className="truncate max-w-[120px] md:max-w-[200px]">{user.email}</span>
           </div>
+          
+          {/* Logout button */}
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all text-sm font-medium"
+            className="flex items-center gap-1 md:gap-2 px-2 md:px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all text-xs md:text-sm font-medium"
             title="লগআউট"
           >
-            <LogOut size={16} />
-            <span>লগআউট</span>
+            <LogOut size={14} className="md:w-4 md:h-4" />
+            <span className="hidden sm:inline">লগআউট</span>
           </button>
         </div>
 
         {currentNote ? (
           <>
-            <div className="p-8 pb-4 flex items-start justify-between">
+            <div className="p-4 md:p-8 pb-2 md:pb-4 pt-12 md:pt-8 flex items-start justify-between">
               <div className="flex-1 max-w-4xl mx-auto w-full">
                 <input
                   type="text"
                   value={currentNote.title}
                   onChange={(e) => updateTitle(e.target.value)}
-                  className="w-full text-3xl font-bold bg-transparent border-none focus:outline-none focus:ring-0 text-slate-800"
+                  className="w-full text-xl md:text-3xl font-bold bg-transparent border-none focus:outline-none focus:ring-0 text-slate-800"
                   placeholder="নোটের শিরোনাম"
                 />
-                <div className="flex items-center gap-4 mt-2 text-sm text-slate-400">
+                <div className="flex flex-wrap items-center gap-2 md:gap-4 mt-2 text-xs md:text-sm text-slate-400">
                   <span className="flex items-center gap-1">
-                    <Calendar size={14} />
+                    <Calendar size={12} className="md:w-3.5 md:h-3.5" />
                     {new Date(currentNote.createdAt).toLocaleDateString()}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Clock size={14} />
-                    শেষ আপডেট: {new Date(currentNote.updatedAt).toLocaleTimeString()}
+                    <Clock size={12} className="md:w-3.5 md:h-3.5" />
+                    <span className="hidden sm:inline">শেষ আপডেট: </span>
+                    {new Date(currentNote.updatedAt).toLocaleTimeString()}
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-8 py-4 scroll-smooth">
-              <div className="max-w-4xl mx-auto w-full min-h-[70vh] bg-white shadow-sm rounded-3xl p-8 md:p-12 mb-20 border border-slate-100">
+            <div className="flex-1 overflow-y-auto px-4 md:px-8 py-2 md:py-4 scroll-smooth pb-24 md:pb-4">
+              <div className="max-w-4xl mx-auto w-full min-h-[60vh] md:min-h-[70vh] bg-white shadow-sm rounded-2xl md:rounded-3xl p-4 md:p-8 lg:p-12 mb-4 md:mb-20 border border-slate-100">
                 {currentNote.paragraphs.length === 0 ? (
-                  <div className="h-full min-h-[50vh] flex flex-col items-center justify-center text-slate-300 opacity-60">
-                    <Edit3 size={64} strokeWidth={1} />
-                    <p className="mt-4 text-lg">নিচে থাকা বাটন চেপে কথা বলা শুরু করুন অথবা সরাসরি টাইপ করুন।</p>
+                  <div className="h-full min-h-[40vh] md:min-h-[50vh] flex flex-col items-center justify-center text-slate-300 opacity-60 px-4">
+                    <Edit3 size={48} className="md:w-16 md:h-16" strokeWidth={1} />
+                    <p className="mt-4 text-sm md:text-lg text-center">নিচে থাকা বাটন চেপে কথা বলা শুরু করুন অথবা সরাসরি টাইপ করুন।</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -510,7 +542,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-10">
+            <div className="fixed md:absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-10">
               <Recorder
                 status={status}
                 setStatus={setStatus}
@@ -519,13 +551,13 @@ const App: React.FC = () => {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-            <BookOpen size={80} strokeWidth={1} />
-            <h2 className="text-2xl font-bold mt-4 text-slate-600">আপনার স্বরলিপি লাইব্রেরী খালি</h2>
-            <p className="mt-2 mb-6">নতুন একটি নোট তৈরি করে শুরু করুন</p>
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-4 pt-12 md:pt-0">
+            <BookOpen size={60} className="md:w-20 md:h-20" strokeWidth={1} />
+            <h2 className="text-xl md:text-2xl font-bold mt-4 text-slate-600 text-center">আপনার স্বরলিপি লাইব্রেরী খালি</h2>
+            <p className="mt-2 mb-6 text-sm md:text-base text-center">নতুন একটি নোট তৈরি করে শুরু করুন</p>
             <button
               onClick={handleNewNote}
-              className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all"
+              className="px-6 md:px-8 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all text-sm md:text-base"
             >
               নতুন নোট শুরু করুন
             </button>
