@@ -71,66 +71,89 @@ const Sidebar: React.FC<SidebarProps> = ({
         isFull ? 'w-full' : 'w-72 md:w-80 border-r border-slate-200'
       }`}
     >
-      <div className="p-4 md:p-6">
+      <div className={`${isFull ? 'p-3 space-y-2.5' : 'p-4 md:p-6'}`}>
         {!isFull && (
           <h1 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2 mb-4 md:mb-6">
             <BookOpen className="text-indigo-600 w-5 h-5 md:w-6 md:h-6" />
             স্বরলিপি AI
           </h1>
         )}
-        <button
-          onClick={onNewNote}
-          className="w-full flex items-center justify-center gap-2 bg-white border-2 border-dashed border-slate-300 text-slate-600 p-2.5 md:p-3 rounded-xl hover:border-indigo-400 hover:text-indigo-600 transition-all font-medium text-sm md:text-base"
-        >
-          <Plus size={16} className="md:w-[18px] md:h-[18px]" />
-          <span className="hidden sm:inline">নতুন নোট তৈরি করুন</span>
-          <span className="sm:hidden">নতুন নোট</span>
-        </button>
+        {/* Mobile (full): compact row of two buttons; Desktop: single New Note button */}
+        {isFull ? (
+          <div className="flex gap-2">
+            <button
+              onClick={onNewNote}
+              className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600 text-white border-0 py-2.5 px-3 rounded-xl hover:bg-indigo-700 transition-all font-medium text-sm shadow-sm"
+            >
+              <Plus size={18} />
+              নতুন নোট
+            </button>
+            {onCreateFolder && (
+              <button
+                type="button"
+                onClick={onCreateFolder}
+                className="flex items-center justify-center gap-1.5 text-slate-600 bg-white border border-slate-200 py-2.5 px-3 rounded-xl hover:bg-slate-50 hover:border-indigo-300 hover:text-indigo-600 transition-all font-medium text-sm"
+              >
+                <FolderPlus size={18} />
+                নতুন ফোল্ডার
+              </button>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={onNewNote}
+            className="w-full flex items-center justify-center gap-2 bg-white border-2 border-dashed border-slate-300 text-slate-600 p-2.5 md:p-3 rounded-xl hover:border-indigo-400 hover:text-indigo-600 transition-all font-medium text-sm md:text-base"
+          >
+            <Plus size={16} className="md:w-[18px] md:h-[18px]" />
+            <span className="hidden sm:inline">নতুন নোট তৈরি করুন</span>
+            <span className="sm:hidden">নতুন নোট</span>
+          </button>
+        )}
         {onSearchChange && (
-          <div className="mt-3 relative">
+          <div className={isFull ? 'relative' : 'mt-3 relative'}>
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="search"
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="নোট খুঁজুন (শিরোনাম বা লেখা)..."
-              className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+              className={`w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none ${!isFull ? 'rounded-lg' : ''}`}
             />
           </div>
         )}
-        {onSelectFolder && onCreateFolder && (
-          <div className="mt-3 space-y-2">
-            <div className="flex gap-2">
-              <select
-                value={selectedFolderId ?? ''}
-                onChange={(e) => onSelectFolder(e.target.value === '' ? null : e.target.value)}
-                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
-              >
-                <option value="">সব নোট</option>
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
-              {onDeleteFolder && selectedFolderId && (
-                <button
-                  type="button"
-                  onClick={() => onDeleteFolder(selectedFolderId)}
-                  title="ফোল্ডার মুছুন"
-                  className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg border border-slate-200 transition-colors"
-                  aria-label="Delete folder"
-                >
-                  <Trash2 size={16} />
-                </button>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={onCreateFolder}
-              className="w-full flex items-center justify-center gap-1.5 text-xs text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-lg py-2 hover:bg-indigo-50/50 transition-colors"
+        {onSelectFolder && (
+          <div className={!isFull ? 'mt-3 space-y-2' : 'flex gap-2'}>
+            <select
+              value={selectedFolderId ?? ''}
+              onChange={(e) => onSelectFolder(e.target.value === '' ? null : e.target.value)}
+              className={`flex-1 px-3 py-2 text-sm border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none ${!isFull ? 'rounded-lg' : ''}`}
             >
-              <FolderPlus size={14} />
-              নতুন ফোল্ডার
-            </button>
+              <option value="">সব নোট</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+            {onDeleteFolder && selectedFolderId && (
+              <button
+                type="button"
+                onClick={() => onDeleteFolder(selectedFolderId)}
+                title="ফোল্ডার মুছুন"
+                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl border border-slate-200 transition-colors shrink-0"
+                aria-label="Delete folder"
+              >
+                <Trash2 size={16} />
+              </button>
+            )}
+            {!isFull && onCreateFolder && (
+              <button
+                type="button"
+                onClick={onCreateFolder}
+                className="w-full flex items-center justify-center gap-1.5 text-xs text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-lg py-2 hover:bg-indigo-50/50 transition-colors"
+              >
+                <FolderPlus size={14} />
+                নতুন ফোল্ডার
+              </button>
+            )}
           </div>
         )}
       </div>

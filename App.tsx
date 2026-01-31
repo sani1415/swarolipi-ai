@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Recorder from './components/Recorder';
 import Auth from './components/Auth';
+import LoadingScreen from './components/LoadingScreen';
 import UpdateDialog from './components/UpdateDialog';
 import { Note, TranscriptParagraph, RecordingStatus, Folder } from './types';
 import { Calendar, Clock, Edit3, BookOpen, LogOut, User, List, FileText, Undo2, Copy } from 'lucide-react';
@@ -708,11 +709,7 @@ const App: React.FC = () => {
 
   // Show loading or auth screen
   if (loading) {
-    return (
-      <div className="flex h-screen bg-slate-50 items-center justify-center">
-        <div className="text-slate-400">লোড হচ্ছে...</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (!supabase) {
@@ -733,19 +730,11 @@ const App: React.FC = () => {
   }
   // Wait for public.users id so loadNotes() uses the correct user_id (not auth UUID)
   if (!userId) {
-    return (
-      <div className="flex h-screen bg-slate-50 items-center justify-center">
-        <div className="text-slate-400">লোড হচ্ছে...</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
   // Same full-screen loading until notes are ready — avoids position jump (one screen, not two)
   if (notesLoading || !notesLoadedOnce) {
-    return (
-      <div className="flex h-screen bg-slate-50 items-center justify-center">
-        <div className="text-slate-400">লোড হচ্ছে...</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   const handleSelectNote = (id: string) => {
