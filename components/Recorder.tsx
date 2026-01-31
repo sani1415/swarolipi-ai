@@ -5,11 +5,18 @@ import { Mic, Pause, Play, Square, Loader2 } from 'lucide-react';
 
 interface RecorderProps {
   onTranscriptionComplete: (text: string) => void;
+  /** Called when user starts recording (e.g. to capture selection for replace) */
+  onRecordingStart?: () => void;
   status: RecordingStatus;
   setStatus: (status: RecordingStatus) => void;
 }
 
-const Recorder: React.FC<RecorderProps> = ({ onTranscriptionComplete, status, setStatus }) => {
+const Recorder: React.FC<RecorderProps> = ({
+  onTranscriptionComplete,
+  onRecordingStart,
+  status,
+  setStatus,
+}) => {
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [timer, setTimer] = useState(0);
   const timerInterval = useRef<number | null>(null);
@@ -28,6 +35,7 @@ const Recorder: React.FC<RecorderProps> = ({ onTranscriptionComplete, status, se
   }, [status]);
 
   const startRecording = async () => {
+    onRecordingStart?.();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
@@ -47,7 +55,6 @@ const Recorder: React.FC<RecorderProps> = ({ onTranscriptionComplete, status, se
           const base64Audio = (reader.result as string).split(',')[1];
           try {
             const { transcribeAudio } = await import('../services/geminiService');
-            // Passing the actual mimeType recorded by the browser
             const result = await transcribeAudio(base64Audio, mimeType);
             onTranscriptionComplete(result);
           } catch (err) {

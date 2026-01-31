@@ -2,48 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Recorder from './components/Recorder';
 import Auth from './components/Auth';
-import { Note, TranscriptParagraph, RecordingStatus } from './types';
-import { Calendar, Clock, Edit3, BookOpen, LogOut, User, List, FileText } from 'lucide-react';
+import { Note, TranscriptParagraph, RecordingStatus, Folder } from './types';
+import { Calendar, Clock, Edit3, BookOpen, LogOut, User, List, FileText, Undo2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
-
-// Move EditableParagraph outside to prevent re-mounting on every render
-const EditableParagraph: React.FC<{
-  p: TranscriptParagraph;
-  onUpdate: (id: string, text: string) => void;
-}> = ({ p, onUpdate }) => {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const adjustHeight = () => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${textarea.scrollHeight}px`;
-    }
-  };
-
-  useEffect(() => {
-    adjustHeight();
-  }, [p.text]);
-
-  return (
-    <div className="relative group w-full">
-      <textarea
-        ref={textareaRef}
-        value={p.text}
-        onChange={(e) => onUpdate(p.id, e.target.value)}
-        onInput={adjustHeight}
-        rows={1}
-        className="w-full text-base md:text-lg lg:text-xl text-slate-700 leading-relaxed bg-transparent border-none focus:ring-2 focus:ring-indigo-100 rounded-lg p-2 -ml-2 transition-all resize-none outline-none overflow-hidden hover:bg-slate-50/50"
-        placeholder="এখানে কিছু লিখুন..."
-      />
-      <div className="flex justify-end">
-        <span className="text-[10px] text-slate-300 font-mono select-none">
-          {new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
-      </div>
-    </div>
-  );
-};
 
 const App: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -57,6 +18,14 @@ const App: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [mobileTab, setMobileTab] = useState<'notes' | 'note'>('notes');
+  const [canUndo, setCanUndo] = useState(false);
+  const undoSnapshotRef = useRef<{ noteId: string; title: string; paragraphs: TranscriptParagraph[] } | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const selectionRangeRef = useRef<{ start: number; end: number } | null>(null);
+  const bodyTextAtRecordRef = useRef<string>('');
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
 
   // Check authentication state and get user
   useEffect(() => {
@@ -201,6 +170,7 @@ const App: React.FC = () => {
             paragraphs: Array.isArray(row.paragraphs) ? row.paragraphs : [],
             createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
             updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+            folder_id: row.folder_id ?? null,
           }));
           setNotes(mapped);
           if (mapped.length > 0) {
@@ -215,7 +185,30 @@ const App: React.FC = () => {
       }
     };
 
+    const loadFolders = async () => {
+      if (!supabase || !userId) return;
+      try {
+        const { data: folderData, error } = await supabase
+          .from('folders')
+          .select('id, name, created_at')
+          .order('name');
+        if (error) {
+          // 404 = folders table doesn't exist yet (run supabase-schema.sql migration)
+          if (error.code === 'PGRST116' || error.message?.includes('404')) {
+            setFolders([]);
+            return;
+          }
+          throw error;
+        }
+        setFolders((folderData as Folder[]) ?? []);
+      } catch (err) {
+        console.warn('Folders not available (run folders migration in Supabase if you need them):', err);
+        setFolders([]);
+      }
+    };
+
     loadNotes();
+    loadFolders();
   }, [userId]);
 
   const persistNoteToCloud = async (note: Note) => {
@@ -225,6 +218,7 @@ const App: React.FC = () => {
       await supabase.from('notes').upsert({
         id: note.id,
         user_id: userId,
+        folder_id: note.folder_id ?? null,
         title: note.title,
         paragraphs: note.paragraphs,
         created_at: new Date(note.createdAt).toISOString(),
@@ -262,6 +256,10 @@ const App: React.FC = () => {
     setNotes([]);
     setCurrentNoteId(null);
     setNotesLoading(false);
+    setFolders([]);
+    setSelectedFolderId(null);
+    setSelectionMode(false);
+    setSelectedNoteIds(new Set());
     // Revoke session on server in the background; don't block the click handler
     supabase.auth.signOut().catch((err) => {
       console.error('Logout error:', err);
@@ -270,6 +268,20 @@ const App: React.FC = () => {
 
   const currentNote = notes.find((n) => n.id === currentNoteId);
 
+  const noteWordCount = currentNote
+    ? (currentNote.title + ' ' + currentNote.paragraphs.map((p) => p.text).join(' '))
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length
+    : 0;
+  const noteCharCount = currentNote
+    ? (currentNote.title + currentNote.paragraphs.map((p) => p.text).join('')).length
+    : 0;
+
+  const notesForList = selectedFolderId == null
+    ? notes
+    : notes.filter((n) => n.folder_id === selectedFolderId);
+
   const handleNewNote = () => {
     const newNote: Note = {
       id: crypto.randomUUID(),
@@ -277,12 +289,42 @@ const App: React.FC = () => {
       paragraphs: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      folder_id: selectedFolderId,
     };
     setNotes([newNote, ...notes]);
     setCurrentNoteId(newNote.id);
-    setMobileTab('note'); // On mobile, show the new note in Current note tab
+    setMobileTab('note');
     persistNoteToCloud(newNote);
   };
+
+  const handleCreateFolder = async () => {
+    const name = prompt('ফোল্ডারের নাম লিখুন');
+    if (!name?.trim() || !supabase || !userId) return;
+    try {
+      const { data, error } = await supabase
+        .from('folders')
+        .insert({ user_id: userId, name: name.trim() })
+        .select()
+        .single();
+      if (!error && data) {
+        setFolders((prev) => [...prev, data as Folder]);
+        setSelectedFolderId(data.id);
+      }
+    } catch (err) {
+      console.error('Failed to create folder', err);
+    }
+  };
+
+  const handleMoveNoteToFolder = useCallback((noteId: string, folderId: string | null) => {
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id !== noteId) return n;
+        const updated: Note = { ...n, folder_id: folderId, updatedAt: Date.now() };
+        persistNoteToCloud(updated);
+        return updated;
+      })
+    );
+  }, []);
 
   const handleDeleteNote = (id: string) => {
     if (!confirm("আপনি কি নিশ্চিতভাবে এই নোটটি মুছে ফেলতে চান?")) return;
@@ -291,7 +333,71 @@ const App: React.FC = () => {
     if (currentNoteId === id) {
       setCurrentNoteId(filtered.length > 0 ? filtered[0].id : null);
     }
+    setSelectedNoteIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     deleteNoteFromCloud(id);
+  };
+
+  const handleToggleSelectionMode = () => {
+    setSelectionMode((s) => !s);
+    setSelectedNoteIds(new Set());
+  };
+
+  const handleToggleSelectNote = (id: string) => {
+    setSelectedNoteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedNoteIds.size === 0) return;
+    if (!confirm(`নির্বাচিত ${selectedNoteIds.size}টি নোট মুছে ফেলবেন?`)) return;
+    const ids = Array.from(selectedNoteIds);
+    setNotes((prev) => {
+      const filtered = prev.filter((n) => !selectedNoteIds.has(n.id));
+      return filtered;
+    });
+    if (currentNoteId && selectedNoteIds.has(currentNoteId)) {
+      const remaining = notes.filter((n) => !selectedNoteIds.has(n.id));
+      setCurrentNoteId(remaining.length > 0 ? remaining[0].id : null);
+    }
+    setSelectedNoteIds(new Set());
+    setSelectionMode(false);
+    ids.forEach((id) => deleteNoteFromCloud(id));
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    const notesInFolder = notes.filter((n) => n.folder_id === folderId).length;
+    const message = notesInFolder > 0
+      ? `এই ফোল্ডারটি এবং ভিতরের ${notesInFolder}টি নোট সব মুছে যাবে। চালিয়ে যেতে চান?`
+      : 'এই ফোল্ডারটি মুছে ফেলবেন?';
+    if (!confirm(message)) return;
+    if (!supabase || !userId) return;
+    try {
+      await supabase.from('folders').delete().eq('id', folderId).eq('user_id', userId);
+      setFolders((prev) => prev.filter((f) => f.id !== folderId));
+      if (selectedFolderId === folderId) setSelectedFolderId(null);
+      const deletedNoteIds = new Set(notes.filter((n) => n.folder_id === folderId).map((n) => n.id));
+      setNotes((prev) => prev.filter((n) => n.folder_id !== folderId));
+      if (currentNoteId && deletedNoteIds.has(currentNoteId)) {
+        const remaining = notes.filter((n) => n.folder_id !== folderId);
+        setCurrentNoteId(remaining.length > 0 ? remaining[0].id : null);
+      }
+      setSelectedNoteIds((prev) => {
+        const next = new Set(prev);
+        deletedNoteIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } catch (err) {
+      console.error('Failed to delete folder', err);
+      alert('ফোল্ডার মুছতে সমস্যা হয়েছে।');
+    }
   };
 
   const handleExportNotes = () => {
@@ -336,7 +442,111 @@ const App: React.FC = () => {
     reader.readAsText(file);
   };
 
+  const saveUndoSnapshot = useCallback(() => {
+    const note = notes.find((n) => n.id === currentNoteId);
+    if (note) {
+      undoSnapshotRef.current = {
+        noteId: note.id,
+        title: note.title,
+        paragraphs: note.paragraphs.map((p) => ({ ...p })),
+      };
+      setCanUndo(true);
+    }
+  }, [notes, currentNoteId]);
+
+  const handleUndo = useCallback(() => {
+    const snap = undoSnapshotRef.current;
+    if (!snap) return;
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id === snap.noteId) {
+          const restored: Note = {
+            ...n,
+            title: snap.title,
+            paragraphs: snap.paragraphs.map((p) => ({ ...p })),
+            updatedAt: Date.now(),
+          };
+          persistNoteToCloud(restored);
+          return restored;
+        }
+        return n;
+      })
+    );
+    undoSnapshotRef.current = null;
+    setCanUndo(false);
+  }, []);
+
+  const updateTitle = (newTitle: string) => {
+    saveUndoSnapshot();
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id === currentNoteId) {
+          const updated: Note = {
+            ...n,
+            title: newTitle,
+            updatedAt: Date.now(),
+          };
+          persistNoteToCloud(updated);
+          return updated;
+        }
+        return n;
+      })
+    );
+  };
+
+  // Clear undo and selection replace when switching to another note
+  useEffect(() => {
+    setCanUndo(false);
+    undoSnapshotRef.current = null;
+    selectionRangeRef.current = null;
+  }, [currentNoteId]);
+
+  /** Single body text: join/split by double newline; updates current note paragraphs */
+  const updateNoteBody = useCallback((bodyText: string) => {
+    saveUndoSnapshot();
+    const blocks = bodyText.split(/\n\n+/).filter((s) => s.trim() !== '').map((s) => s.trim());
+    if (blocks.length === 0) {
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== currentNoteId) return n;
+          const updated: Note = { ...n, paragraphs: [], updatedAt: Date.now() };
+          persistNoteToCloud(updated);
+          return updated;
+        })
+      );
+      return;
+    }
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id !== currentNoteId) return n;
+        const existing = n.paragraphs;
+        const newParagraphs: TranscriptParagraph[] = blocks.map((text, i) => {
+          if (i < existing.length) return { ...existing[i], text };
+          return { id: crypto.randomUUID(), text, timestamp: Date.now() };
+        });
+        const updated: Note = { ...n, paragraphs: newParagraphs, updatedAt: Date.now() };
+        persistNoteToCloud(updated);
+        return updated;
+      })
+    );
+  }, [currentNoteId, saveUndoSnapshot]);
+
+  const handleRecordingStart = useCallback(() => {
+    const el = document.activeElement;
+    if (el instanceof HTMLTextAreaElement && el.dataset.bodyTextarea === 'true') {
+      if (el.selectionStart !== el.selectionEnd) {
+        selectionRangeRef.current = { start: el.selectionStart, end: el.selectionEnd };
+        bodyTextAtRecordRef.current = el.value;
+      } else {
+        selectionRangeRef.current = null;
+      }
+    }
+  }, []);
+
   const handleTranscriptionComplete = useCallback((text: string) => {
+    const selection = selectionRangeRef.current;
+    selectionRangeRef.current = null;
+
     if (!currentNoteId) {
       const newId = crypto.randomUUID();
       const newParagraph: TranscriptParagraph = {
@@ -354,66 +564,39 @@ const App: React.FC = () => {
       setNotes(prev => [newNote, ...prev]);
       setCurrentNoteId(newId);
       persistNoteToCloud(newNote);
-    } else {
-      setNotes((prev) => {
-        const updated = prev.map((n) => {
-          if (n.id === currentNoteId) {
-            const newParagraph: TranscriptParagraph = {
-              id: crypto.randomUUID(),
-              text,
-              timestamp: Date.now(),
-            };
-            const nextNote: Note = {
-              ...n,
-              paragraphs: [...n.paragraphs, newParagraph],
-              updatedAt: Date.now(),
-            };
-            persistNoteToCloud(nextNote);
-            return nextNote;
-          }
-          return n;
-        });
-        return updated;
-      });
+      setStatus('idle');
+      return;
     }
+
+    if (selection && bodyTextAtRecordRef.current !== undefined) {
+      const body = bodyTextAtRecordRef.current;
+      const newBody = body.slice(0, selection.start) + text + body.slice(selection.end);
+      updateNoteBody(newBody);
+      bodyTextAtRecordRef.current = '';
+      setStatus('idle');
+      return;
+    }
+
+    setNotes((prev) => {
+      const updated = prev.map((n) => {
+        if (n.id !== currentNoteId) return n;
+        const newParagraph: TranscriptParagraph = {
+          id: crypto.randomUUID(),
+          text,
+          timestamp: Date.now(),
+        };
+        const nextNote: Note = {
+          ...n,
+          paragraphs: [...n.paragraphs, newParagraph],
+          updatedAt: Date.now(),
+        };
+        persistNoteToCloud(nextNote);
+        return nextNote;
+      });
+      return updated;
+    });
     setStatus('idle');
-  }, [currentNoteId]);
-
-  const updateTitle = (newTitle: string) => {
-    setNotes((prev) =>
-      prev.map((n) => {
-        if (n.id === currentNoteId) {
-          const updated: Note = {
-            ...n,
-            title: newTitle,
-            updatedAt: Date.now(),
-          };
-          persistNoteToCloud(updated);
-          return updated;
-        }
-        return n;
-      })
-    );
-  };
-
-  const updateParagraph = useCallback((pId: string, newText: string) => {
-    setNotes((prev) =>
-      prev.map((n) => {
-        if (n.id === currentNoteId) {
-          const updated: Note = {
-            ...n,
-            updatedAt: Date.now(),
-            paragraphs: n.paragraphs.map((p) =>
-              p.id === pId ? { ...p, text: newText } : p
-            ),
-          };
-          persistNoteToCloud(updated);
-          return updated;
-        }
-        return n;
-      })
-    );
-  }, [currentNoteId]);
+  }, [currentNoteId, updateNoteBody]);
 
   // Show loading or auth screen
   if (loading) {
@@ -468,7 +651,7 @@ const App: React.FC = () => {
       {/* Desktop: sidebar (hidden on mobile; mobile uses tabs instead) */}
       <div className="hidden md:block md:flex-shrink-0">
         <Sidebar
-          notes={notes}
+          notes={notesForList}
           currentNoteId={currentNoteId}
           onSelectNote={handleSelectNote}
           onNewNote={handleNewNote}
@@ -477,6 +660,16 @@ const App: React.FC = () => {
           onImport={handleImportNotes}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          folders={folders}
+          selectedFolderId={selectedFolderId}
+          onSelectFolder={setSelectedFolderId}
+          onCreateFolder={handleCreateFolder}
+          onDeleteFolder={handleDeleteFolder}
+          selectionMode={selectionMode}
+          selectedNoteIds={selectedNoteIds}
+          onToggleSelectionMode={handleToggleSelectionMode}
+          onToggleSelectNote={handleToggleSelectNote}
+          onDeleteSelected={handleDeleteSelected}
           variant="sidebar"
         />
       </div>
@@ -532,7 +725,7 @@ const App: React.FC = () => {
           <div className="md:hidden flex-1 min-h-0 overflow-hidden flex flex-col">
             {mobileTab === 'notes' ? (
               <Sidebar
-                notes={notes}
+                notes={notesForList}
                 currentNoteId={currentNoteId}
                 onSelectNote={handleSelectNote}
                 onNewNote={handleNewNote}
@@ -541,6 +734,16 @@ const App: React.FC = () => {
                 onImport={handleImportNotes}
                 searchQuery={searchQuery}
                 onSearchChange={setSearchQuery}
+                folders={folders}
+                selectedFolderId={selectedFolderId}
+                onSelectFolder={setSelectedFolderId}
+                onCreateFolder={handleCreateFolder}
+                onDeleteFolder={handleDeleteFolder}
+                selectionMode={selectionMode}
+                selectedNoteIds={selectedNoteIds}
+                onToggleSelectionMode={handleToggleSelectionMode}
+                onToggleSelectNote={handleToggleSelectNote}
+                onDeleteSelected={handleDeleteSelected}
                 variant="full"
               />
             ) : (
@@ -558,34 +761,58 @@ const App: React.FC = () => {
                       <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-slate-400">
                         <span>{new Date(currentNote.createdAt).toLocaleDateString()}</span>
                         <span>{new Date(currentNote.updatedAt).toLocaleTimeString()}</span>
+                        <span className="text-slate-300">{noteWordCount} শব্দ · {noteCharCount} অক্ষর</span>
+                        {folders.length > 0 && (
+                          <select
+                            value={currentNote.folder_id ?? ''}
+                            onChange={(e) => handleMoveNoteToFolder(currentNote.id, e.target.value || null)}
+                            className="text-slate-500 bg-slate-50 border border-slate-200 rounded px-2 py-1"
+                            title="ফোল্ডারে সরান"
+                          >
+                            <option value="">ফোল্ডার নেই</option>
+                            {folders.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                          </select>
+                        )}
+                        {canUndo && (
+                          <button
+                            type="button"
+                            onClick={handleUndo}
+                            className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium"
+                          >
+                            <Undo2 size={14} />
+                            পূর্বাবস্থা
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="flex-1 overflow-y-auto px-4 py-2">
                       <div className="max-w-4xl mx-auto min-h-[40vh] bg-white rounded-2xl p-4 border border-slate-100">
-                        {currentNote.paragraphs.length === 0 ? (
-                          <div className="min-h-[30vh] flex flex-col items-center justify-center text-slate-300 text-sm px-4">
-                            <Edit3 size={40} />
-                            <p className="mt-3 text-center">নিচে বাটন চেপে কথা বলুন বা টাইপ করুন।</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-4">
-                            {currentNote.paragraphs.map((p, index) => (
-                              <React.Fragment key={p.id}>
-                                <EditableParagraph p={p} onUpdate={updateParagraph} />
-                                {index < currentNote.paragraphs.length - 1 && (
-                                  <div className="my-2 border-b border-slate-50 w-full opacity-50" />
-                                )}
-                              </React.Fragment>
-                            ))}
-                          </div>
-                        )}
+                        <textarea
+                          data-body-textarea="true"
+                          value={currentNote.paragraphs.map((p) => p.text).join('\n\n')}
+                          onChange={(e) => updateNoteBody(e.target.value)}
+                          placeholder="এখানে লিখুন বা নিচে মাইক চেপে কথা বলুন। নির্বাচিত টেক্সট থাকলে রেকর্ড করলে সেটা প্রতিস্থাপন হবে।"
+                          className="w-full min-h-[30vh] text-base text-slate-700 leading-relaxed bg-transparent border-none focus:ring-0 outline-none resize-none p-0 font-['Inter','Noto_Sans_Bengali']"
+                          style={{ fontFamily: 'inherit' }}
+                        />
                       </div>
                     </div>
-                    <div className="p-4 pt-2 pb-6">
+                    <div className="p-4 pt-2 pb-6 flex flex-col items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleNewNote}
+                        className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1.5"
+                      >
+                        <FileText size={16} />
+                        নতুন নোট
+                      </button>
                       <Recorder
                         status={status}
                         setStatus={setStatus}
                         onTranscriptionComplete={handleTranscriptionComplete}
+                        onRecordingStart={handleRecordingStart}
                       />
                     </div>
                   </>
@@ -629,40 +856,61 @@ const App: React.FC = () => {
                     <span className="hidden sm:inline">শেষ আপডেট: </span>
                     {new Date(currentNote.updatedAt).toLocaleTimeString()}
                   </span>
+                  <span className="text-slate-300">{noteWordCount} শব্দ · {noteCharCount} অক্ষর</span>
+                  {folders.length > 0 && (
+                    <select
+                      value={currentNote.folder_id ?? ''}
+                      onChange={(e) => handleMoveNoteToFolder(currentNote.id, e.target.value || null)}
+                      className="text-slate-500 text-xs md:text-sm bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5"
+                      title="ফোল্ডারে সরান"
+                    >
+                      <option value="">ফোল্ডার নেই</option>
+                      {folders.map((f) => (
+                        <option key={f.id} value={f.id}>{f.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {canUndo && (
+                    <button
+                      type="button"
+                      onClick={handleUndo}
+                      className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium"
+                    >
+                      <Undo2 size={14} className="md:w-3.5 md:h-3.5" />
+                      পূর্বাবস্থা
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 md:px-8 py-2 md:py-4 scroll-smooth pb-24 md:pb-4">
               <div className="max-w-4xl mx-auto w-full min-h-[60vh] md:min-h-[70vh] bg-white shadow-sm rounded-2xl md:rounded-3xl p-4 md:p-8 lg:p-12 mb-4 md:mb-20 border border-slate-100">
-                {currentNote.paragraphs.length === 0 ? (
-                  <div className="h-full min-h-[40vh] md:min-h-[50vh] flex flex-col items-center justify-center text-slate-300 opacity-60 px-4">
-                    <Edit3 size={48} className="md:w-16 md:h-16" strokeWidth={1} />
-                    <p className="mt-4 text-sm md:text-lg text-center">নিচে থাকা বাটন চেপে কথা বলা শুরু করুন অথবা সরাসরি টাইপ করুন।</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {currentNote.paragraphs.map((p, index) => (
-                      <React.Fragment key={p.id}>
-                        <EditableParagraph 
-                          p={p} 
-                          onUpdate={updateParagraph}
-                        />
-                        {index < currentNote.paragraphs.length - 1 && (
-                          <div className="my-2 border-b border-slate-50 w-full opacity-50" />
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </div>
-                )}
+                <textarea
+                  data-body-textarea="true"
+                  value={currentNote.paragraphs.map((p) => p.text).join('\n\n')}
+                  onChange={(e) => updateNoteBody(e.target.value)}
+                  placeholder="এখানে লিখুন বা নিচে মাইক চেপে কথা বলুন। টেক্সট সিলেক্ট করে রেকর্ড করলে সিলেক্টেড অংশ প্রতিস্থাপন হবে।"
+                  className="w-full min-h-[50vh] text-base md:text-lg lg:text-xl text-slate-700 leading-relaxed bg-transparent border-none focus:ring-0 outline-none resize-none p-0 font-['Inter','Noto_Sans_Bengali']"
+                  style={{ fontFamily: 'inherit' }}
+                />
               </div>
             </div>
 
-            <div className="fixed md:absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-10">
+            <div className="fixed md:absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-10 flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={handleNewNote}
+                className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1.5"
+              >
+                <FileText size={16} />
+                নতুন নোট
+              </button>
               <Recorder
                 status={status}
                 setStatus={setStatus}
                 onTranscriptionComplete={handleTranscriptionComplete}
+                onRecordingStart={handleRecordingStart}
               />
             </div>
           </>
@@ -670,10 +918,13 @@ const App: React.FC = () => {
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-4 pt-12 md:pt-0">
             <BookOpen size={60} className="md:w-20 md:h-20" strokeWidth={1} />
             <h2 className="text-xl md:text-2xl font-bold mt-4 text-slate-600 text-center">আপনার স্বরলিপি লাইব্রেরী খালি</h2>
-            <p className="mt-2 mb-6 text-sm md:text-base text-center">নতুন একটি নোট তৈরি করে শুরু করুন</p>
+            <p className="mt-2 text-sm md:text-base text-center">নতুন একটি নোট তৈরি করে শুরু করুন</p>
+            <p className="mt-3 text-sm text-indigo-600/90 text-center max-w-sm">
+              নিচে <strong>মাইক</strong> বাটন চাপে কথা বলুন — আপনার প্রথম ভয়েস নোট অটো লিখে দেওয়া হবে।
+            </p>
             <button
               onClick={handleNewNote}
-              className="px-6 md:px-8 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all text-sm md:text-base"
+              className="mt-6 px-6 md:px-8 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all text-sm md:text-base"
             >
               নতুন নোট শুরু করুন
             </button>

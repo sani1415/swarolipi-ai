@@ -10,10 +10,32 @@ create table if not exists public.users (
   created_at timestamptz default now()
 );
 
+-- Migration: if you already have public.notes without folders, first create public.folders (run the block below),
+-- then run: alter table public.notes add column if not exists folder_id uuid references public.folders (id) on delete set null;
+-- Folders table (one level: user can group notes)
+create table if not exists public.folders (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references public.users (id) on delete cascade,
+  name text not null,
+  created_at timestamptz default now()
+);
+
+alter table public.folders enable row level security;
+
+create policy "Users can manage their own folders"
+on public.folders for all
+using (
+  exists (select 1 from public.users u where u.id = folders.user_id and u.auth_user_id = auth.uid())
+)
+with check (
+  exists (select 1 from public.users u where u.id = folders.user_id and u.auth_user_id = auth.uid())
+);
+
 -- Notes table storing all transcribed notes for a user
 create table if not exists public.notes (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references public.users (id) on delete cascade,
+  folder_id uuid references public.folders (id) on delete set null,
   title text not null default '',
   paragraphs jsonb not null default '[]'::jsonb,
   created_at timestamptz default now(),

@@ -1,6 +1,6 @@
 import React, { useRef, useMemo } from 'react';
-import { Note } from '../types';
-import { Plus, MessageSquare, Trash2, BookOpen, Download, Upload, Database, Search } from 'lucide-react';
+import { Note, Folder } from '../types';
+import { Plus, MessageSquare, Trash2, BookOpen, Download, Upload, Database, Search, FolderPlus, CheckSquare, Square, X } from 'lucide-react';
 
 function noteMatchesSearch(note: Note, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -19,7 +19,16 @@ interface SidebarProps {
   onImport: (event: React.ChangeEvent<HTMLInputElement>) => void;
   searchQuery?: string;
   onSearchChange?: (value: string) => void;
-  /** On mobile tab layout, sidebar fills the main area */
+  folders?: Folder[];
+  selectedFolderId?: string | null;
+  onSelectFolder?: (folderId: string | null) => void;
+  onCreateFolder?: () => void;
+  onDeleteFolder?: (folderId: string) => void;
+  selectionMode?: boolean;
+  selectedNoteIds?: Set<string>;
+  onToggleSelectionMode?: () => void;
+  onToggleSelectNote?: (id: string) => void;
+  onDeleteSelected?: () => void;
   variant?: 'sidebar' | 'full';
 }
 
@@ -33,6 +42,16 @@ const Sidebar: React.FC<SidebarProps> = ({
   onImport,
   searchQuery = '',
   onSearchChange,
+  folders = [],
+  selectedFolderId = null,
+  onSelectFolder,
+  onCreateFolder,
+  onDeleteFolder,
+  selectionMode = false,
+  selectedNoteIds = new Set(),
+  onToggleSelectionMode,
+  onToggleSelectNote,
+  onDeleteSelected,
   variant = 'sidebar',
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,10 +98,79 @@ const Sidebar: React.FC<SidebarProps> = ({
             />
           </div>
         )}
+        {onSelectFolder && onCreateFolder && (
+          <div className="mt-3 space-y-2">
+            <div className="flex gap-2">
+              <select
+                value={selectedFolderId ?? ''}
+                onChange={(e) => onSelectFolder(e.target.value === '' ? null : e.target.value)}
+                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+              >
+                <option value="">সব নোট</option>
+                {folders.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              {onDeleteFolder && selectedFolderId && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteFolder(selectedFolderId)}
+                  title="ফোল্ডার মুছুন"
+                  className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg border border-slate-200 transition-colors"
+                  aria-label="Delete folder"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onCreateFolder}
+              className="w-full flex items-center justify-center gap-1.5 text-xs text-slate-600 hover:text-indigo-600 border border-slate-200 rounded-lg py-2 hover:bg-indigo-50/50 transition-colors"
+            >
+              <FolderPlus size={14} />
+              নতুন ফোল্ডার
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 md:px-4 space-y-2 pb-4 md:pb-6">
-        <h2 className="px-2 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">লাইব্রেরী</h2>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <h2 className="px-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">লাইব্রেরী</h2>
+          {onToggleSelectionMode && filteredNotes.length > 0 && (
+            selectionMode ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onDeleteSelected}
+                  disabled={selectedNoteIds.size === 0}
+                  className="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 disabled:opacity-50 font-medium"
+                >
+                  <Trash2 size={14} />
+                  নির্বাচিত মুছুন {selectedNoteIds.size > 0 && `(${selectedNoteIds.size})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={onToggleSelectionMode}
+                  className="p-1.5 text-slate-500 hover:text-slate-700 rounded"
+                  title="বাতিল"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={onToggleSelectionMode}
+                className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+              >
+                <CheckSquare size={14} />
+                নির্বাচন
+              </button>
+            )
+          )}
+        </div>
         {filteredNotes.length === 0 ? (
           <p className="px-2 text-xs md:text-sm text-slate-400 italic">
             {searchQuery.trim() ? 'খুঁজে কোন নোট পাওয়া যায়নি' : 'কোন নোট নেই'}
@@ -91,24 +179,41 @@ const Sidebar: React.FC<SidebarProps> = ({
           filteredNotes.map((note) => (
             <div
               key={note.id}
-              className={`group flex items-center justify-between p-2.5 md:p-3 rounded-xl cursor-pointer transition-all ${
-                currentNoteId === note.id ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'hover:bg-white text-slate-600'
-              }`}
-              onClick={() => onSelectNote(note.id)}
+              className={`flex items-center gap-2 p-2.5 md:p-3 rounded-xl cursor-pointer transition-all ${
+                currentNoteId === note.id && !selectionMode ? 'bg-indigo-50 text-indigo-700 shadow-sm' : 'hover:bg-white text-slate-600'
+              } ${selectionMode && selectedNoteIds.has(note.id) ? 'ring-2 ring-indigo-400 bg-indigo-50/50' : ''}`}
+              onClick={() => {
+                if (selectionMode && onToggleSelectNote) onToggleSelectNote(note.id);
+                else onSelectNote(note.id);
+              }}
             >
+              {selectionMode && onToggleSelectNote ? (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onToggleSelectNote(note.id); }}
+                  className="flex-shrink-0 p-0.5 text-indigo-600"
+                  aria-label={selectedNoteIds.has(note.id) ? 'Deselect' : 'Select'}
+                >
+                  {selectedNoteIds.has(note.id) ? <CheckSquare size={20} /> : <Square size={20} className="text-slate-300" />}
+                </button>
+              ) : null}
               <div className="flex items-center gap-2 md:gap-3 overflow-hidden min-w-0 flex-1">
                 <MessageSquare size={16} className={`md:w-[18px] md:h-[18px] flex-shrink-0 ${currentNoteId === note.id ? 'text-indigo-500' : 'text-slate-400'}`} />
                 <span className="truncate font-medium text-sm md:text-base">{note.title || 'শিরোনামহীন নোট'}</span>
               </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteNote(note.id);
-                }}
-                className="opacity-0 group-hover:opacity-100 md:opacity-0 p-1 hover:text-red-600 transition-all flex-shrink-0"
-              >
-                <Trash2 size={14} className="md:w-4 md:h-4" />
-              </button>
+              {!selectionMode && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteNote(note.id);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all flex-shrink-0 touch-manipulation"
+                  title="নোট মুছুন"
+                  aria-label="Delete note"
+                >
+                  <Trash2 size={16} className="md:w-4 md:h-4" />
+                </button>
+              )}
             </div>
           ))
         )}
