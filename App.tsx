@@ -23,9 +23,17 @@ const App: React.FC = () => {
   const [folders, setFolders] = useState<Folder[]>([]);
   const selectionRangeRef = useRef<{ start: number; end: number } | null>(null);
   const bodyTextAtRecordRef = useRef<string>('');
+  const bodyTextareaMobileRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodyTextareaDesktopRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastSelectionRef = useRef<{ start: number; end: number; value: string } | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
+  const [replacingSelection, setReplacingSelection] = useState(false);
+  const [replacingSelectionRange, setReplacingSelectionRange] = useState<{ start: number; end: number } | null>(null);
+  const [replacingSelectionBody, setReplacingSelectionBody] = useState('');
+  const overlayMobileRef = useRef<HTMLDivElement | null>(null);
+  const overlayDesktopRef = useRef<HTMLDivElement | null>(null);
 
   // Check authentication state and get user
   useEffect(() => {
@@ -501,6 +509,33 @@ const App: React.FC = () => {
     selectionRangeRef.current = null;
   }, [currentNoteId]);
 
+  useEffect(() => {
+    if (status === 'idle') {
+      setReplacingSelection(false);
+      setReplacingSelectionRange(null);
+      setReplacingSelectionBody('');
+    }
+  }, [status]);
+
+  useEffect(() => {
+    if (!replacingSelection || !replacingSelectionRange) return;
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    const textarea = isMobile ? bodyTextareaMobileRef.current : bodyTextareaDesktopRef.current;
+    const overlay = isMobile ? overlayMobileRef.current : overlayDesktopRef.current;
+    if (textarea && overlay) {
+      overlay.scrollTop = textarea.scrollTop;
+      overlay.scrollLeft = textarea.scrollLeft;
+    }
+  }, [replacingSelection, replacingSelectionRange]);
+
+  const syncOverlayScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>, isMobile: boolean) => {
+    const overlay = isMobile ? overlayMobileRef.current : overlayDesktopRef.current;
+    if (overlay && e.target instanceof HTMLTextAreaElement) {
+      overlay.scrollTop = e.target.scrollTop;
+      overlay.scrollLeft = e.target.scrollLeft;
+    }
+  }, []);
+
   /** Single body text: join/split by double newline; updates current note paragraphs */
   const updateNoteBody = useCallback((bodyText: string) => {
     saveUndoSnapshot();
@@ -531,19 +566,45 @@ const App: React.FC = () => {
     );
   }, [currentNoteId, saveUndoSnapshot]);
 
-  const handleRecordingStart = useCallback(() => {
-    const el = document.activeElement;
-    if (el instanceof HTMLTextAreaElement && el.dataset.bodyTextarea === 'true') {
-      if (el.selectionStart !== el.selectionEnd) {
-        selectionRangeRef.current = { start: el.selectionStart, end: el.selectionEnd };
-        bodyTextAtRecordRef.current = el.value;
-      } else {
-        selectionRangeRef.current = null;
-      }
-    }
+  const captureSelection = useCallback((e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const target = e.currentTarget;
+    lastSelectionRef.current = { start: target.selectionStart, end: target.selectionEnd, value: target.value };
   }, []);
 
+  const handleRecordingStart = useCallback(() => {
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    const el = isMobile ? bodyTextareaMobileRef.current : bodyTextareaDesktopRef.current;
+    const currentBody = currentNoteId && notes.find((n) => n.id === currentNoteId)
+      ? notes.find((n) => n.id === currentNoteId)!.paragraphs.map((p) => p.text).join('\n\n')
+      : '';
+    if (el && el.selectionStart !== el.selectionEnd) {
+      const range = { start: el.selectionStart, end: el.selectionEnd };
+      selectionRangeRef.current = range;
+      bodyTextAtRecordRef.current = el.value;
+      setReplacingSelectionRange(range);
+      setReplacingSelectionBody(el.value);
+      setReplacingSelection(true);
+      return;
+    }
+    if (lastSelectionRef.current && lastSelectionRef.current.start !== lastSelectionRef.current.end && lastSelectionRef.current.value === currentBody) {
+      const range = { start: lastSelectionRef.current.start, end: lastSelectionRef.current.end };
+      selectionRangeRef.current = range;
+      bodyTextAtRecordRef.current = lastSelectionRef.current.value;
+      setReplacingSelectionRange(range);
+      setReplacingSelectionBody(lastSelectionRef.current.value);
+      setReplacingSelection(true);
+      return;
+    }
+    selectionRangeRef.current = null;
+    setReplacingSelection(false);
+    setReplacingSelectionRange(null);
+    setReplacingSelectionBody('');
+  }, [currentNoteId, notes]);
+
   const handleTranscriptionComplete = useCallback((text: string) => {
+    setReplacingSelection(false);
+    setReplacingSelectionRange(null);
+    setReplacingSelectionBody('');
     const selection = selectionRangeRef.current;
     selectionRangeRef.current = null;
 
@@ -789,14 +850,31 @@ const App: React.FC = () => {
                     </div>
                     <div className="flex-1 overflow-y-auto px-4 py-2">
                       <div className="max-w-4xl mx-auto min-h-[40vh] bg-white rounded-2xl p-4 border border-slate-100">
-                        <textarea
-                          data-body-textarea="true"
-                          value={currentNote.paragraphs.map((p) => p.text).join('\n\n')}
-                          onChange={(e) => updateNoteBody(e.target.value)}
-                          placeholder="এখানে লিখুন বা নিচে মাইক চেপে কথা বলুন। নির্বাচিত টেক্সট থাকলে রেকর্ড করলে সেটা প্রতিস্থাপন হবে।"
-                          className="w-full min-h-[30vh] text-base text-slate-700 leading-relaxed bg-transparent border-none focus:ring-0 outline-none resize-none p-0 font-['Inter','Noto_Sans_Bengali']"
-                          style={{ fontFamily: 'inherit' }}
-                        />
+                        <div className="relative">
+                          <textarea
+                            ref={bodyTextareaMobileRef}
+                            data-body-textarea="true"
+                            value={currentNote.paragraphs.map((p) => p.text).join('\n\n')}
+                            onChange={(e) => updateNoteBody(e.target.value)}
+                            onSelect={captureSelection}
+                            onScroll={(e) => syncOverlayScroll(e, true)}
+                            placeholder="এখানে লিখুন বা নিচে মাইক চেপে কথা বলুন। নির্বাচিত টেক্সট থাকলে রেকর্ড করলে সেটা প্রতিস্থাপন হবে।"
+                            className="w-full min-h-[30vh] text-base text-slate-700 leading-relaxed bg-transparent border-none focus:ring-0 outline-none resize-none p-0 font-['Inter','Noto_Sans_Bengali']"
+                            style={{ fontFamily: 'inherit' }}
+                          />
+                          {replacingSelection && replacingSelectionRange && (
+                            <div
+                              ref={overlayMobileRef}
+                              className="absolute inset-0 overflow-auto pointer-events-none whitespace-pre-wrap text-base text-slate-700 leading-relaxed p-0 font-['Inter','Noto_Sans_Bengali'] bg-white"
+                              style={{ fontFamily: 'inherit' }}
+                              aria-hidden
+                            >
+                              {replacingSelectionBody.slice(0, replacingSelectionRange.start)}
+                              <span className="bg-amber-200/70 rounded-sm">{replacingSelectionBody.slice(replacingSelectionRange.start, replacingSelectionRange.end)}</span>
+                              {replacingSelectionBody.slice(replacingSelectionRange.end)}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="p-4 pt-2 pb-6 flex flex-col items-center gap-3">
@@ -808,6 +886,11 @@ const App: React.FC = () => {
                         <FileText size={16} />
                         নতুন নোট
                       </button>
+                      {(status === 'recording' || status === 'paused') && replacingSelection && (
+                        <p className="text-sm text-indigo-600 font-medium" role="status">
+                          নির্বাচিত অংশ প্রতিস্থাপন হবে
+                        </p>
+                      )}
                       <Recorder
                         status={status}
                         setStatus={setStatus}
@@ -886,14 +969,31 @@ const App: React.FC = () => {
 
             <div className="flex-1 overflow-y-auto px-4 md:px-8 py-2 md:py-4 scroll-smooth pb-24 md:pb-4">
               <div className="max-w-4xl mx-auto w-full min-h-[60vh] md:min-h-[70vh] bg-white shadow-sm rounded-2xl md:rounded-3xl p-4 md:p-8 lg:p-12 mb-4 md:mb-20 border border-slate-100">
-                <textarea
-                  data-body-textarea="true"
-                  value={currentNote.paragraphs.map((p) => p.text).join('\n\n')}
-                  onChange={(e) => updateNoteBody(e.target.value)}
-                  placeholder="এখানে লিখুন বা নিচে মাইক চেপে কথা বলুন। টেক্সট সিলেক্ট করে রেকর্ড করলে সিলেক্টেড অংশ প্রতিস্থাপন হবে।"
-                  className="w-full min-h-[50vh] text-base md:text-lg lg:text-xl text-slate-700 leading-relaxed bg-transparent border-none focus:ring-0 outline-none resize-none p-0 font-['Inter','Noto_Sans_Bengali']"
-                  style={{ fontFamily: 'inherit' }}
-                />
+                <div className="relative">
+                  <textarea
+                    ref={bodyTextareaDesktopRef}
+                    data-body-textarea="true"
+                    value={currentNote.paragraphs.map((p) => p.text).join('\n\n')}
+                    onChange={(e) => updateNoteBody(e.target.value)}
+                    onSelect={captureSelection}
+                    onScroll={(e) => syncOverlayScroll(e, false)}
+                    placeholder="এখানে লিখুন বা নিচে মাইক চেপে কথা বলুন। টেক্সট সিলেক্ট করে রেকর্ড করলে সিলেক্টেড অংশ প্রতিস্থাপন হবে।"
+                    className="w-full min-h-[50vh] text-base md:text-lg lg:text-xl text-slate-700 leading-relaxed bg-transparent border-none focus:ring-0 outline-none resize-none p-0 font-['Inter','Noto_Sans_Bengali']"
+                    style={{ fontFamily: 'inherit' }}
+                  />
+                  {replacingSelection && replacingSelectionRange && (
+                    <div
+                      ref={overlayDesktopRef}
+                      className="absolute inset-0 overflow-auto pointer-events-none whitespace-pre-wrap text-base md:text-lg lg:text-xl text-slate-700 leading-relaxed p-0 font-['Inter','Noto_Sans_Bengali'] bg-white"
+                      style={{ fontFamily: 'inherit' }}
+                      aria-hidden
+                    >
+                      {replacingSelectionBody.slice(0, replacingSelectionRange.start)}
+                      <span className="bg-amber-200/70 rounded-sm">{replacingSelectionBody.slice(replacingSelectionRange.start, replacingSelectionRange.end)}</span>
+                      {replacingSelectionBody.slice(replacingSelectionRange.end)}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -906,6 +1006,11 @@ const App: React.FC = () => {
                 <FileText size={16} />
                 নতুন নোট
               </button>
+              {(status === 'recording' || status === 'paused') && replacingSelection && (
+                <p className="text-sm text-indigo-600 font-medium" role="status">
+                  নির্বাচিত অংশ প্রতিস্থাপন হবে
+                </p>
+              )}
               <Recorder
                 status={status}
                 setStatus={setStatus}
