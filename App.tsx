@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar';
 import Recorder from './components/Recorder';
 import Auth from './components/Auth';
 import { Note, TranscriptParagraph, RecordingStatus } from './types';
-import { Calendar, Clock, Edit3, BookOpen, LogOut, User, Menu, X } from 'lucide-react';
+import { Calendar, Clock, Edit3, BookOpen, LogOut, User, List, FileText } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 // Move EditableParagraph outside to prevent re-mounting on every render
@@ -55,6 +55,8 @@ const App: React.FC = () => {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesLoadedOnce, setNotesLoadedOnce] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [mobileTab, setMobileTab] = useState<'notes' | 'note'>('notes');
 
   // Check authentication state and get user
   useEffect(() => {
@@ -278,6 +280,7 @@ const App: React.FC = () => {
     };
     setNotes([newNote, ...notes]);
     setCurrentNoteId(newNote.id);
+    setMobileTab('note'); // On mobile, show the new note in Current note tab
     persistNoteToCloud(newNote);
   };
 
@@ -454,55 +457,37 @@ const App: React.FC = () => {
     );
   }
 
+  const handleSelectNote = (id: string) => {
+    setCurrentNoteId(id);
+    setSidebarOpen(false);
+    setMobileTab('note'); // Switch to Current note tab on mobile
+  };
+
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-['Inter','Noto_Sans_Bengali']">
-      {/* Mobile sidebar overlay */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* Sidebar */}
-      <div className={`
-        fixed md:static inset-y-0 left-0 z-50 md:z-auto
-        transform transition-transform duration-300 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-      `}>
+      {/* Desktop: sidebar (hidden on mobile; mobile uses tabs instead) */}
+      <div className="hidden md:block md:flex-shrink-0">
         <Sidebar
           notes={notes}
           currentNoteId={currentNoteId}
-          onSelectNote={(id) => {
-            setCurrentNoteId(id);
-            setSidebarOpen(false); // Close sidebar on mobile when note is selected
-          }}
+          onSelectNote={handleSelectNote}
           onNewNote={handleNewNote}
           onDeleteNote={handleDeleteNote}
           onExport={handleExportNotes}
           onImport={handleImportNotes}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          variant="sidebar"
         />
       </div>
 
-      <main className="flex-1 flex flex-col relative min-w-0">
-        {/* Mobile menu button and user controls */}
+      <main className="flex-1 flex flex-col relative min-w-0 overflow-hidden">
+        {/* Top bar: user info + logout (desktop); on mobile shown above tab content when needed) */}
         <div className="absolute top-2 right-2 md:top-4 md:right-4 z-20 flex items-center gap-2 md:gap-3">
-          {/* Mobile menu button */}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="md:hidden p-2 bg-white rounded-lg shadow-sm border border-slate-200 text-slate-600 hover:bg-slate-50"
-            aria-label="Toggle menu"
-          >
-            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-
-          {/* User info - hidden on mobile, show on tablet+ */}
           <div className="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 bg-white rounded-lg shadow-sm border border-slate-200 text-xs md:text-sm text-slate-600">
             <User size={14} className="md:w-4 md:h-4" />
             <span className="truncate max-w-[120px] md:max-w-[200px]">{user.email}</span>
           </div>
-          
-          {/* Logout button */}
           <button
             onClick={handleLogout}
             className="flex items-center gap-1 md:gap-2 px-2 md:px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all text-xs md:text-sm font-medium"
@@ -513,6 +498,116 @@ const App: React.FC = () => {
           </button>
         </div>
 
+        {/* Mobile: tab content (Notes list or Current note) */}
+        <div className="flex-1 flex flex-col min-h-0 md:min-h-0">
+          {/* Mobile tab bar */}
+          <div className="md:hidden flex border-b border-slate-200 bg-white shrink-0">
+            <button
+              type="button"
+              onClick={() => setMobileTab('notes')}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
+                mobileTab === 'notes'
+                  ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <List size={18} />
+              নোট তালিকা
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTab('note')}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
+                mobileTab === 'note'
+                  ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <FileText size={18} />
+              বর্তমান নোট
+            </button>
+          </div>
+
+          {/* Mobile: show Notes list or Current note based on tab */}
+          <div className="md:hidden flex-1 min-h-0 overflow-hidden flex flex-col">
+            {mobileTab === 'notes' ? (
+              <Sidebar
+                notes={notes}
+                currentNoteId={currentNoteId}
+                onSelectNote={handleSelectNote}
+                onNewNote={handleNewNote}
+                onDeleteNote={handleDeleteNote}
+                onExport={handleExportNotes}
+                onImport={handleImportNotes}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                variant="full"
+              />
+            ) : (
+              <div className="flex-1 flex flex-col min-h-0 overflow-auto">
+                {currentNote ? (
+                  <>
+                    <div className="p-4 pb-2 pt-4 flex flex-col">
+                      <input
+                        type="text"
+                        value={currentNote.title}
+                        onChange={(e) => updateTitle(e.target.value)}
+                        className="w-full text-xl font-bold bg-transparent border-none focus:outline-none focus:ring-0 text-slate-800"
+                        placeholder="নোটের শিরোনাম"
+                      />
+                      <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-slate-400">
+                        <span>{new Date(currentNote.createdAt).toLocaleDateString()}</span>
+                        <span>{new Date(currentNote.updatedAt).toLocaleTimeString()}</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-4 py-2">
+                      <div className="max-w-4xl mx-auto min-h-[40vh] bg-white rounded-2xl p-4 border border-slate-100">
+                        {currentNote.paragraphs.length === 0 ? (
+                          <div className="min-h-[30vh] flex flex-col items-center justify-center text-slate-300 text-sm px-4">
+                            <Edit3 size={40} />
+                            <p className="mt-3 text-center">নিচে বাটন চেপে কথা বলুন বা টাইপ করুন।</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {currentNote.paragraphs.map((p, index) => (
+                              <React.Fragment key={p.id}>
+                                <EditableParagraph p={p} onUpdate={updateParagraph} />
+                                {index < currentNote.paragraphs.length - 1 && (
+                                  <div className="my-2 border-b border-slate-50 w-full opacity-50" />
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="p-4 pt-2 pb-6">
+                      <Recorder
+                        status={status}
+                        setStatus={setStatus}
+                        onTranscriptionComplete={handleTranscriptionComplete}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-4 py-8">
+                    <FileText size={48} className="text-slate-300" />
+                    <p className="mt-4 text-slate-600 text-center">নোট তালিকা থেকে একটি নোট নির্বাচন করুন</p>
+                    <button
+                      type="button"
+                      onClick={() => setMobileTab('notes')}
+                      className="mt-4 text-indigo-600 font-medium text-sm"
+                    >
+                      নোট তালিকায় যান
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Desktop: main content (unchanged) */}
+          <div className="hidden md:flex md:flex-1 md:flex-col md:min-h-0">
         {currentNote ? (
           <>
             <div className="p-4 md:p-8 pb-2 md:pb-4 pt-12 md:pt-8 flex items-start justify-between">
@@ -584,6 +679,8 @@ const App: React.FC = () => {
             </button>
           </div>
         )}
+          </div>
+        </div>
       </main>
     </div>
   );
