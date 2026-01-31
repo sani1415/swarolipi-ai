@@ -52,6 +52,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
   const [userId, setUserId] = useState<string | null>(null); // user_id from public.users table
   const [loading, setLoading] = useState(true);
+  const [notesLoading, setNotesLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Check authentication state and get user
@@ -63,10 +64,8 @@ const App: React.FC = () => {
 
     const resolveUserId = async (authUserId: string): Promise<void> => {
       try {
-        // Set fallback immediately so app doesn't wait
-        setUserId(authUserId);
-
-        // Try to get existing user row with timeout
+        // Notes table uses public.users.id, not auth_user_id — only set userId when we have it
+        // so loadNotes() never runs with the wrong id (which would return no notes and race).
         const queryPromise = supabase
           .from('users')
           .select('id')
@@ -106,17 +105,18 @@ const App: React.FC = () => {
                 return;
               }
             } catch (createErr) {
-              // Already using fallback, just log
               console.warn('Error creating user row:', createErr);
             }
           }
+          // No row or create failed: fallback so app doesn't stay stuck
+          setUserId(authUserId);
         } catch (timeoutErr) {
           console.warn('User ID resolution timed out, using auth user ID');
-          // Already set to authUserId above, so we're good
+          setUserId(authUserId);
         }
       } catch (err) {
         console.error('Error resolving user ID, using fallback:', err);
-        // Already set to authUserId above, so we're good
+        setUserId(authUserId);
       }
     };
 
@@ -165,6 +165,7 @@ const App: React.FC = () => {
         setUserId(null);
         setNotes([]);
         setCurrentNoteId(null);
+        setNotesLoading(false);
       }
     });
 
@@ -176,6 +177,7 @@ const App: React.FC = () => {
     if (!supabase || !userId) return;
 
     const loadNotes = async () => {
+      setNotesLoading(true);
       try {
         const { data, error } = await supabase
           .from('notes')
@@ -203,6 +205,8 @@ const App: React.FC = () => {
         }
       } catch (err) {
         console.error('Unexpected error loading notes from Supabase', err);
+      } finally {
+        setNotesLoading(false);
       }
     };
 
@@ -240,25 +244,23 @@ const App: React.FC = () => {
     // Auth component will trigger auth state change, which will reload notes
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     if (!supabase) return;
     
-    // Show confirmation dialog
     if (!confirm('আপনি কি সত্যিই লগআউট করতে চান?')) {
       return;
     }
     
-    try {
-      await supabase.auth.signOut();
-      // Explicitly clear state to prevent race conditions
-      setUser(null);
-      setUserId(null);
-      setNotes([]);
-      setCurrentNoteId(null);
-    } catch (err) {
+    // Clear UI immediately so the click handler returns quickly (avoids "handler took Xms" violation)
+    setUser(null);
+    setUserId(null);
+    setNotes([]);
+    setCurrentNoteId(null);
+    setNotesLoading(false);
+    // Revoke session on server in the background; don't block the click handler
+    supabase.auth.signOut().catch((err) => {
       console.error('Logout error:', err);
-      alert('লগআউটে সমস্যা হয়েছে। দয়া করে পুনরায় চেষ্টা করুন।');
-    }
+    });
   };
 
   const currentNote = notes.find((n) => n.id === currentNoteId);
@@ -429,8 +431,16 @@ const App: React.FC = () => {
     );
   }
 
-  if (!user || !userId) {
+  if (!user) {
     return <Auth onAuthSuccess={handleAuthSuccess} />;
+  }
+  // Wait for public.users id so loadNotes() uses the correct user_id (not auth UUID)
+  if (!userId) {
+    return (
+      <div className="flex h-screen bg-slate-50 items-center justify-center">
+        <div className="text-slate-400">লোড হচ্ছে...</div>
+      </div>
+    );
   }
 
   return (
@@ -550,6 +560,10 @@ const App: React.FC = () => {
               />
             </div>
           </>
+        ) : notesLoading ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-4 pt-12 md:pt-0">
+            <div className="text-slate-400">নোট লোড হচ্ছে...</div>
+          </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-4 pt-12 md:pt-0">
             <BookOpen size={60} className="md:w-20 md:h-20" strokeWidth={1} />
